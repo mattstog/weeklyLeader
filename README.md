@@ -4,9 +4,13 @@ Automates weekly leader selection and topic rotation for your men's group.
 
 ## Features
 
-- **Sunday 9 AM**: Sends check-in message asking people to like if they're attending
-- **Sunday 2 PM**: Selects leader (who hasn't led in longest) and topic, sends announcement
+- **Sunday 9 AM**: Sends check-in message asking people to like or react if they're attending
+- **Sunday 1:50 PM**: Sends 10-minute reminder to react to the check-in
+- **Sunday 2 PM**: 
+  - If less than 2 people reacted: Cancels group automatically
+  - If 2+ people reacted: Selects leader (who hasn't led in longest) and topic, sends announcement with @mention
 - Tracks leader history and rotates through topics evenly
+- Accepts any reaction (heart, thumbs up, fire, etc.) as attendance
 - Randomizes selection when there are ties
 
 ## Setup
@@ -109,30 +113,63 @@ import('./index.js').then(bot => {
   // Test check-in message
   bot.manualCheckIn();
   
+  // Test reminder message
+  bot.manualReminder();
+  
   // Test selection (make sure someone liked the message first!)
   // Wait a few seconds, then:
   bot.manualSelection();
+  
+  // OR test the full workflow with 2-minute delay
+  bot.manualTestBoth();
 });
 ```
 
 ## Running 24/7
 
-### On Raspberry Pi
+### On Raspberry Pi (Recommended)
 
-1. Install Node.js if you haven't:
+1. **Install Node.js:**
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
 sudo apt-get install -y nodejs
 ```
 
-2. Use PM2 to keep it running:
+2. **Transfer your project to the Pi:**
 ```bash
-npm install -g pm2
-pm2 start index.js --name groupme-leader-bot
-pm2 save
-pm2 startup
+# Option A: Use git
+git clone YOUR_REPO_URL
+cd weeklyLeader
+
+# Option B: Use scp from your Mac
+scp -r weeklyLeader pi@raspberrypi.local:~/
 ```
 
+3. **Install dependencies:**
+```bash
+npm install
+```
+
+4. **Create .env file with your credentials**
+
+5. **Use PM2 to keep it running:**
+```bash
+npm install -g pm2
+pm2 start index.js --name groupme-bot
+pm2 save
+pm2 startup
+# Follow the command it shows you
+```
+
+6. **Useful PM2 commands:**
+```bash
+pm2 status                 # Check if running
+pm2 logs groupme-bot       # View logs
+pm2 restart groupme-bot    # Restart after updates
+pm2 stop groupme-bot       # Stop the bot
+```
+
+### On Cloud (Railway, Render, etc.)
 ### On Cloud (Railway, Render, etc.)
 
 1. Create a new project
@@ -182,14 +219,16 @@ Set each member's `lastLed` to `null` and `timesLed` to `0`
 
 ## How It Works
 
-1. **Check-in**: Bot posts a message at 9 AM asking for likes
-2. **Tracking**: Bot stores the message ID
-3. **Selection**: At 2 PM, bot:
-   - Fetches who liked the message
-   - Finds the person who hasn't led in longest (or random if tie)
-   - Picks a topic that hasn't been used recently (or random if all used)
-   - Updates the config with leader's last led date
-   - Announces leader + topic
+1. **Check-in (9 AM)**: Bot posts a message asking for likes or reactions
+2. **Reminder (1:50 PM)**: Bot sends a 10-minute reminder to react
+3. **Selection (2 PM)**: Bot:
+   - Fetches who liked/reacted to the check-in message (any reaction counts!)
+   - **If less than 2 people**: Automatically cancels group for the week
+   - **If 2+ people**: 
+     - Finds the person who hasn't led in longest (or random if tie)
+     - Picks a topic that hasn't been used recently (or random if all used)
+     - Updates the config with leader's last led date
+     - Announces leader + topic with @mention
 4. **Rotation**: Topics rotate through the list, resetting when all are used
 
 ## License
