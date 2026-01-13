@@ -1,0 +1,16 @@
+{
+  "name": "groupme-leader-bot",
+  "version": "1.0.0",
+  "description": "Automated weekly leader selection and topic rotation for men's group",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "node-cron": "^3.0.3",
+    "node-fetch": "^3.3.2",
+    "dotenv": "^16.3.1"
+  }
+}
