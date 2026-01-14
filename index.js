@@ -234,8 +234,17 @@ async function selectAndAnnounce() {
   
   console.log(`Found ${attendees.length} people who liked the message`);
   
-  // Check if we have enough people 
+  // Check if we have enough people
   if (attendees.length < 2) {
+    config.history.push({
+      date: new Date().toISOString(),
+      leader: null,
+      leaderId: null,
+      topic: null,
+      attendees: attendees.length,
+      cancelled: true
+    });
+    await saveConfig(config);
     await sendMessage("⚠️ Less than 2 people reacted. Group is cancelled this week. See you next Sunday!");
     return;
   }
@@ -258,6 +267,16 @@ async function selectAndAnnounce() {
   config.currentWeek.leader = leader.name;
   config.currentWeek.topic = topic;
   
+  // Add to history
+  config.history.push({
+    date: new Date().toISOString(),
+    leader: leader.name,
+    leaderId: leader.user_id,
+    topic: topic,
+    attendees: attendees.length,
+    cancelled: false
+  });
+  
   await saveConfig(config);
   
   // Send announcement with @mention
@@ -268,7 +287,6 @@ async function selectAndAnnounce() {
   // Calculate mention position - need to account for emoji and @ symbol
   const beforeMention = "📣 This week's leader: @";
   const mentionStart = [...beforeMention].length; // Use spread to count actual characters including emoji
-  const mentionLength = [...leader.name].length+1;
   
   await sendMessageWithMention(announcement, {
     loci: [[mentionStart, mentionLength]],
@@ -390,7 +408,7 @@ export async function manualTestBoth() {
   console.log('   👉 Go to GroupMe and LIKE the check-in message now!');
   console.log('');
   
-  // Wait 1 minute
+  // Wait 2 Minutes
   await new Promise(resolve => setTimeout(resolve, 120000));
   
   // Step 2: Run selection

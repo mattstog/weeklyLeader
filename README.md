@@ -7,11 +7,12 @@ Automates weekly leader selection and topic rotation for your men's group.
 - **Sunday 9 AM**: Sends check-in message asking people to like or react if they're attending
 - **Sunday 1:50 PM**: Sends 10-minute reminder to react to the check-in
 - **Sunday 2 PM**: 
-  - If less than 2 people reacted: Cancels group automatically
+  - If less than 2 people reacted: Automatically cancels group for the week
   - If 2+ people reacted: Selects leader (who hasn't led in longest) and topic, sends announcement with @mention
 - Tracks leader history and rotates through topics evenly
 - Accepts any reaction (heart, thumbs up, fire, etc.) as attendance
 - Randomizes selection when there are ties
+- Maintains full history log of all assignments and cancellations
 
 ## Setup
 
@@ -202,6 +203,37 @@ Clear the `usedTopics` array in `config.json` to start fresh
 
 Set each member's `lastLed` to `null` and `timesLed` to `0`
 
+## Admin Commands
+
+### View History
+See all past weeks and cancellations:
+```bash
+npm run history
+```
+
+Shows output like:
+```
+📜 History (3 entries):
+
+1. Sun Jan 12, 2025 - Matthew led on "Courage" (5 attendees)
+2. Sun Jan 19, 2025 - ❌ CANCELLED (1 attendees)
+3. Sun Jan 26, 2025 - John led on "Faith" (4 attendees)
+```
+
+### Undo Last Week
+If something went wrong (group cancelled but bot assigned a leader, or you picked a different topic):
+```bash
+npm run undo
+```
+
+This will:
+- Show what happened last week
+- Revert the leader's stats (lastLed date and timesLed count)
+- Remove the topic from usedTopics
+- Delete that history entry
+
+The bot looks at history to find the leader's previous date, so you won't lose that info!
+
 ## Troubleshooting
 
 ### Bot not sending messages
@@ -229,6 +261,7 @@ Set each member's `lastLed` to `null` and `timesLed` to `0`
      - Picks a topic that hasn't been used recently (or random if all used)
      - Updates the config with leader's last led date
      - Announces leader + topic with @mention
+     - Logs everything to history
 4. **Rotation**: Topics rotate through the list, resetting when all are used
 
 ## License
