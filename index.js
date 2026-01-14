@@ -405,12 +405,12 @@ export async function manualTestBoth() {
   await manualCheckIn();
   
   console.log('');
-  console.log('⏳ Waiting 2 minutes for you to like the message...');
+  console.log('⏳ Waiting 1 minute for you to like the message...');
   console.log('   👉 Go to GroupMe and LIKE the check-in message now!');
   console.log('');
   
-  // Wait 2 Minutes
-  await new Promise(resolve => setTimeout(resolve, 120000));
+  // Wait 1 Minute
+  await new Promise(resolve => setTimeout(resolve, 60000));
   
   // Step 2: Run selection
   console.log('⏰ Time is up! Running selection now...');
