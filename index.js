@@ -287,6 +287,7 @@ async function selectAndAnnounce() {
   // Calculate mention position - need to account for emoji and @ symbol
   const beforeMention = "📣 This week's leader: @";
   const mentionStart = [...beforeMention].length; // Use spread to count actual characters including emoji
+  const mentionLength = [...leader.name].length + 1; // adding one to Claude's code to get full name
   
   await sendMessageWithMention(announcement, {
     loci: [[mentionStart, mentionLength]],
