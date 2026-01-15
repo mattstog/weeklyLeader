@@ -213,6 +213,9 @@ async function selectAndAnnounce() {
   console.log('--- SELECTING LEADER AND TOPIC ---');
   const config = await loadConfig();
   
+  // Get minimum attendees threshold from environment variable (default: 3)
+  const minAttendees = parseInt(process.env.MIN_ATTENDEES) || 3;
+  
   // Find the most recent bot message (our check-in)
   const messages = await getGroupMessages(20);
   const botMessages = messages.filter(msg => msg.sender_type === 'bot');
@@ -233,9 +236,10 @@ async function selectAndAnnounce() {
   const attendees = await getCheckInLikes(messageId);
   
   console.log(`Found ${attendees.length} people who liked the message`);
+  console.log(`Minimum required: ${minAttendees}`);
   
   // Check if we have enough people
-  if (attendees.length < 2) {
+  if (attendees.length < minAttendees) {
     config.history.push({
       date: new Date().toISOString(),
       leader: null,
@@ -245,7 +249,7 @@ async function selectAndAnnounce() {
       cancelled: true
     });
     await saveConfig(config);
-    await sendMessage("⚠️ Less than 2 people reacted. Group is cancelled this week. See you next Sunday!");
+    await sendMessage(`⚠️ Less than ${minAttendees} people reacted. Group is cancelled this week. See you next Sunday!`);
     return;
   }
   
@@ -344,6 +348,7 @@ async function sendMessageWithMention(text, mentions) {
 function initScheduler() {
   const checkInTime = process.env.CHECKIN_TIME || '9:00';
   const selectionTime = process.env.SELECTION_TIME || '14:00';
+  const minAttendees = parseInt(process.env.MIN_ATTENDEES) || 3;
   
   const [checkInHour, checkInMinute] = checkInTime.split(':');
   const [selectionHour, selectionMinute] = selectionTime.split(':');
@@ -377,6 +382,7 @@ function initScheduler() {
   console.log(`   Check-in: Every Sunday at ${checkInTime}`);
   console.log(`   Reminder: Every Sunday at ${reminderHour}:${reminderMinute.toString().padStart(2, '0')}`);
   console.log(`   Selection: Every Sunday at ${selectionTime}`);
+  console.log(`   Minimum attendees required: ${minAttendees}`);
 }
 
 // Manual trigger functions for testing
