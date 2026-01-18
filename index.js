@@ -419,8 +419,16 @@ export async function manualTestBoth() {
   console.log('   👉 Go to GroupMe and LIKE the check-in message now!');
   console.log('');
   
-  // Wait 1 Minute
-  await new Promise(resolve => setTimeout(resolve, 60000));
+  // Wait 30 seconds
+  await new Promise(resolve => setTimeout(resolve, 30000));
+  
+  // Send 30-second reminder
+  console.log('⏰ 30 seconds left!');
+  await manualReminder();
+  console.log('');
+  
+  // Wait another 30 seconds (total of 1 minute)
+  await new Promise(resolve => setTimeout(resolve, 30000));
   
   // Step 2: Run selection
   console.log('⏰ Time is up! Running selection now...');
