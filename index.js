@@ -216,17 +216,21 @@ async function selectAndAnnounce() {
   // Get minimum attendees threshold from environment variable (default: 3)
   const minAttendees = parseInt(process.env.MIN_ATTENDEES) || 3;
   
-  // Find the most recent bot message (our check-in)
-  const messages = await getGroupMessages(20);
+  // Find the check-in message by searching for its text content
+  const messages = await getGroupMessages(50); // Increased limit to ensure we find it
   const botMessages = messages.filter(msg => msg.sender_type === 'bot');
   
-  if (botMessages.length === 0) {
+  // Look for the specific check-in message text
+  const checkInMessage = botMessages.find(msg => 
+    msg.text && msg.text.includes("Like or react to this message if you're in")
+  );
+  
+  if (!checkInMessage) {
     console.error('❌ Could not find check-in message');
-    console.log('💡 Make sure you ran manualCheckIn() first and waited a few seconds!');
+    console.log('💡 Make sure the check-in message was sent and try again');
     return;
   }
   
-  const checkInMessage = botMessages[0]; // Most recent bot message
   const messageId = checkInMessage.id;
   
   console.log(`✅ Found check-in message: "${checkInMessage.text}"`);
