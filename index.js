@@ -30,11 +30,27 @@ async function saveConfig(config) {
   }
 }
 
+// Retry helper - retries a function up to `retries` times with `delayMs` between attempts
+async function withRetry(fn, retries = 3, delayMs = 10000, label = 'operation') {
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt === retries) {
+        console.error(`❌ ${label} failed after ${retries} attempts.`);
+        throw error;
+      }
+      console.warn(`⚠️ ${label} attempt ${attempt} failed (${error.code || error.message}). Retrying in ${delayMs / 1000}s...`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+    }
+  }
+}
+
 // Send message to GroupMe
 async function sendMessage(text) {
   const botId = process.env.GROUPME_BOT_ID;
-  
-  try {
+
+  return withRetry(async () => {
     const response = await fetch('https://api.groupme.com/v3/bots/post', {
       method: 'POST',
       headers: {
@@ -62,11 +78,10 @@ async function sendMessage(text) {
     const data = await response.json();
     console.log('✅ Message sent:', text);
     return data;
-  } catch (error) {
-    console.error('Error sending message:', error);
+  }, 3, 10000, `sendMessage("${text.substring(0, 30)}...")`).catch(error => {
     console.error('Bot ID being used:', botId);
     throw error;
-  }
+  });
 }
 
 // Get messages from group (to find likes)
@@ -306,8 +321,8 @@ async function selectAndAnnounce() {
 // Send message with @mention to GroupMe
 async function sendMessageWithMention(text, mentions) {
   const botId = process.env.GROUPME_BOT_ID;
-  
-  try {
+
+  return withRetry(async () => {
     const response = await fetch('https://api.groupme.com/v3/bots/post', {
       method: 'POST',
       headers: {
@@ -342,10 +357,7 @@ async function sendMessageWithMention(text, mentions) {
     const data = await response.json();
     console.log('✅ Message with mention sent:', text);
     return data;
-  } catch (error) {
-    console.error('Error sending message with mention:', error);
-    throw error;
-  }
+  }, 3, 10000, `sendMessageWithMention("${text.substring(0, 30)}...")`);
 }
 
 // Initialize cron jobs
