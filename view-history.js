@@ -24,9 +24,11 @@ async function viewHistory() {
       });
       
       if (entry.cancelled) {
-        console.log(`${index + 1}. ${dateStr} - ❌ CANCELLED (${entry.attendees} attendees)`);
+        const undoneStr = entry.undone ? ' (undone: true)' : '';
+        console.log(`${index + 1}. ${dateStr} - ❌ CANCELLED (${entry.attendees} attendees)${undoneStr}`);
       } else {
-        console.log(`${index + 1}. ${dateStr} - ${entry.leader} led on "${entry.topic}" (${entry.attendees} attendees)`);
+        const undoneStr = entry.undone ? ' (undone: true)' : '';
+        console.log(`${index + 1}. ${dateStr} - ${entry.leader} led on "${entry.topic}" (${entry.attendees} attendees)${undoneStr}`);
       }
     });
     

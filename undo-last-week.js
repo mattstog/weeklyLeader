@@ -15,6 +15,11 @@ async function undoLastWeek() {
     
     // Get the last entry
     const lastEntry = config.history[config.history.length - 1];
+
+    if (lastEntry.undone) {
+      console.log('❌ Last entry has already been undone');
+      return;
+    }
     
     console.log('Last entry:');
     console.log(`  Date: ${new Date(lastEntry.date).toLocaleString()}`);
@@ -60,8 +65,8 @@ async function undoLastWeek() {
       }
     }
     
-    // Remove the last entry from history
-    config.history.pop();
+    // Mark the entry as undone instead of removing it
+    lastEntry.undone = true;
     
     // Save config
     await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2));
