@@ -13,6 +13,7 @@ Automates weekly leader selection and topic rotation for your men's group.
 - Accepts any reaction (heart, thumbs up, fire, etc.) as attendance
 - Randomizes selection when there are ties
 - Maintains full history log of all assignments and cancellations
+- Replies when tagged in the GroupMe chat, using recent messages and leader history as context
 
 ## Setup
 
@@ -55,7 +56,44 @@ Edit `.env` and add your credentials:
 GROUPME_BOT_ID=your_bot_id_here
 GROUPME_ACCESS_TOKEN=your_access_token_here
 GROUP_ID=your_group_id_here
+GROUPME_BOT_NAME=Leader Bot
+OPENAI_API_KEY=your_openai_api_key_here
 ```
+
+Optional mention-reply settings:
+
+```env
+PORT=3000
+GROUPME_CALLBACK_PATH=/groupme/callback
+GROUPME_CALLBACK_TOKEN=make_this_a_long_random_value
+GROUPME_BOT_USER_ID=your_bot_groupme_user_id_if_mentions_attach_it
+GROUPME_BOT_HANDLE=Weekly Leader
+MENTION_CONTEXT_LIMIT=20
+MENTION_COOLDOWN_SECONDS=15
+BOT_PERSONALITY_FILE=./bot-personality.md
+OPENAI_MODEL=gpt-4o-mini
+MAX_REPLY_LENGTH=900
+REQUEST_TIMEOUT_MS=15000
+```
+
+`GROUPME_BOT_NAME` or `GROUPME_BOT_HANDLE` should match the text people use when tagging the bot, like `@Leader Bot`. If GroupMe sends mention attachments with a user ID for the bot, set `GROUPME_BOT_USER_ID` too.
+
+Edit `bot-personality.md` to change how tagged replies sound. The default voice is a calm, concise, super-wise monk.
+
+### 3a. Enable Tag Replies
+
+GroupMe needs a public callback URL for the bot:
+
+1. Deploy or run the bot somewhere reachable from the internet.
+2. Point the GroupMe bot callback URL to:
+
+```text
+https://your-domain.com/groupme/callback?token=make_this_a_long_random_value
+```
+
+If you change `GROUPME_CALLBACK_PATH`, use that path instead. `GROUPME_CALLBACK_TOKEN` is optional, but recommended for production so random public requests cannot trigger bot replies or OpenAI usage.
+
+When a non-bot message tags the bot, it fetches recent group messages, combines them with current leader/topic/history state, asks OpenAI for a concise reply, and posts the answer back to GroupMe.
 
 ### 4. Configure Topics and Members
 
@@ -98,6 +136,14 @@ npm start
 ```
 
 The bot will run continuously and execute at the scheduled times every Sunday.
+
+For a quick production sanity check before deploy:
+
+```bash
+npm run check
+```
+
+Once deployed, hit `/health` to confirm the webhook server is alive.
 
 ## Testing Manually
 
@@ -171,12 +217,15 @@ pm2 stop groupme-bot       # Stop the bot
 ```
 
 ### On Cloud (Railway, Render, etc.)
-### On Cloud (Railway, Render, etc.)
 
 1. Create a new project
 2. Connect your GitHub repo
 3. Set environment variables in the dashboard
-4. Deploy!
+4. Set the start command to `npm start`
+5. Deploy
+6. Set the GroupMe callback URL to your deployed `/groupme/callback?token=...` URL
+
+Use a service with persistent disk if you want `config.json` history and leader rotations to survive redeploys. On ephemeral hosts, store `config.json` somewhere durable or commit updated history manually after running locally.
 
 ## Customization
 

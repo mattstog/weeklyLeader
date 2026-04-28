@@ -1,12 +1,60 @@
 import cron from 'node-cron';
 import fetch from 'node-fetch';
 import fs from 'fs/promises';
+import http from 'http';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const CONFIG_FILE = './config.json';
+const DEFAULT_BOT_PERSONALITY_FILE = './bot-personality.md';
 const GROUPME_API_BASE = 'https://api.groupme.com/v3';
+const OPENAI_API_BASE = 'https://api.openai.com/v1';
+const processedMessageIds = new Set();
+const mentionCooldowns = new Map();
+
+function parsePositiveInteger(value, fallback) {
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function getRequestTimeoutMs() {
+  return parsePositiveInteger(process.env.REQUEST_TIMEOUT_MS, 15000);
+}
+
+async function fetchWithTimeout(url, options = {}, timeoutMs = getRequestTimeoutMs()) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function truncateForGroupMe(text) {
+  const maxLength = parsePositiveInteger(process.env.MAX_REPLY_LENGTH, 900);
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength - 1).trimEnd()}…`;
+}
+
+function rememberProcessedMessage(id) {
+  if (!id) return;
+  processedMessageIds.add(id);
+
+  if (processedMessageIds.size > 100) {
+    const [oldestId] = processedMessageIds;
+    processedMessageIds.delete(oldestId);
+  }
+}
 
 // Load configuration
 async function loadConfig() {
@@ -19,14 +67,67 @@ async function loadConfig() {
   }
 }
 
+function validateConfig(config) {
+  const errors = [];
+
+  if (!Array.isArray(config.topics) || config.topics.length === 0) {
+    errors.push('topics must be a non-empty array');
+  }
+
+  if (!Array.isArray(config.usedTopics)) {
+    errors.push('usedTopics must be an array');
+  }
+
+  if (!Array.isArray(config.members) || config.members.length === 0) {
+    errors.push('members must be a non-empty array');
+  } else {
+    config.members.forEach((member, index) => {
+      if (!member.user_id) errors.push(`members[${index}].user_id is required`);
+      if (!member.name) errors.push(`members[${index}].name is required`);
+      if (!Number.isFinite(member.timesLed)) errors.push(`members[${index}].timesLed must be a number`);
+    });
+  }
+
+  if (!Array.isArray(config.history)) {
+    errors.push('history must be an array');
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Invalid config.json:\n- ${errors.join('\n- ')}`);
+  }
+}
+
 // Save configuration
 async function saveConfig(config) {
   try {
-    await fs.writeFile(CONFIG_FILE, JSON.stringify(config, null, 2));
+    const tempFile = `${CONFIG_FILE}.tmp`;
+    await fs.writeFile(tempFile, JSON.stringify(config, null, 2));
+    await fs.rename(tempFile, CONFIG_FILE);
     console.log('Config saved successfully');
   } catch (error) {
     console.error('Error saving config:', error);
     throw error;
+  }
+}
+
+async function loadBotPersonality() {
+  const personalityFile = process.env.BOT_PERSONALITY_FILE || DEFAULT_BOT_PERSONALITY_FILE;
+
+  try {
+    const personality = await fs.readFile(personalityFile, 'utf8');
+    return personality.trim();
+  } catch (error) {
+    if (error.code !== 'ENOENT') {
+      console.error('Error loading bot personality:', error);
+    }
+
+    return [
+      'You are Weekly Leader Bot in a GroupMe chat for a weekly discussion group.',
+      'Reply conversationally and helpfully when tagged.',
+      'Use the recent message context and bot state to answer. If the context is not enough, say what you are missing.',
+      'Keep replies concise, usually under 120 words.',
+      'Do not claim to have taken an action unless the provided state or recent messages show it.',
+    ].join(' ');
   }
 }
 
@@ -51,7 +152,7 @@ async function sendMessage(text) {
   const botId = process.env.GROUPME_BOT_ID;
 
   return withRetry(async () => {
-    const response = await fetch('https://api.groupme.com/v3/bots/post', {
+    const response = await fetchWithTimeout('https://api.groupme.com/v3/bots/post', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -86,11 +187,11 @@ async function sendMessage(text) {
 
 // Get messages from group (to find likes)
 async function getGroupMessages(limit = 100) {
-  const accessToken = process.env.GROUPME_ACCESS_TOKEN;
+  const accessToken = encodeURIComponent(process.env.GROUPME_ACCESS_TOKEN);
   const groupId = process.env.GROUP_ID;
   
   try {
-    const response = await fetch(
+    const response = await fetchWithTimeout(
       `${GROUPME_API_BASE}/groups/${groupId}/messages?token=${accessToken}&limit=${limit}`,
       {
         method: 'GET',
@@ -100,12 +201,309 @@ async function getGroupMessages(limit = 100) {
       }
     );
 
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`GroupMe API returned ${response.status}: ${errorText}`);
+    }
+
     const data = await response.json();
-    return data.response.messages;
+    return data.response?.messages || [];
   } catch (error) {
     console.error('Error getting messages:', error);
     throw error;
   }
+}
+
+function getBotMentionNames() {
+  return [
+    process.env.GROUPME_BOT_NAME,
+    process.env.GROUPME_BOT_HANDLE,
+    'Weekly Leader',
+    'Leader Bot',
+  ].filter(Boolean);
+}
+
+function stripBotMention(text = '') {
+  let cleanedText = text;
+
+  for (const name of getBotMentionNames()) {
+    cleanedText = cleanedText.replace(new RegExp(`@${escapeRegExp(name)}\\b`, 'gi'), '').trim();
+  }
+
+  return cleanedText;
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function isMentioningBot(message) {
+  const botUserId = process.env.GROUPME_BOT_USER_ID;
+  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  const mentionAttachment = attachments.find(attachment => attachment.type === 'mentions');
+
+  if (
+    botUserId &&
+    mentionAttachment?.user_ids?.some(userId => String(userId) === String(botUserId))
+  ) {
+    return true;
+  }
+
+  const text = message.text || '';
+  return getBotMentionNames().some(name => new RegExp(`@${escapeRegExp(name)}\\b`, 'i').test(text));
+}
+
+function formatMessageForContext(message) {
+  const date = message.created_at
+    ? new Date(message.created_at * 1000).toISOString()
+    : 'unknown time';
+  const name = message.name || message.sender_name || message.user_id || 'Unknown';
+  const text = message.text || '[no text]';
+
+  return `[${date}] ${name}: ${text}`;
+}
+
+function summarizeConfig(config) {
+  const currentWeek = config.currentWeek || {};
+  const recentHistory = Array.isArray(config.history)
+    ? config.history.slice(-5).map(entry => ({
+        date: entry.date,
+        leader: entry.leader,
+        topic: entry.topic,
+        attendees: entry.attendees,
+        cancelled: entry.cancelled,
+      }))
+    : [];
+
+  return {
+    currentWeek: {
+      leader: currentWeek.leader || null,
+      topic: currentWeek.topic || null,
+      date: currentWeek.date || null,
+    },
+    members: Array.isArray(config.members)
+      ? config.members.map(member => ({
+          name: member.name,
+          user_id: member.user_id,
+          lastLed: member.lastLed,
+          timesLed: member.timesLed,
+        }))
+      : [],
+    recentHistory,
+  };
+}
+
+async function buildMentionReply(message, contextMessages, config) {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error('OPENAI_API_KEY is required for mention replies');
+  }
+
+  const promptContext = contextMessages
+    .map(formatMessageForContext)
+    .join('\n');
+  const configContext = JSON.stringify(summarizeConfig(config), null, 2);
+  const directQuestion = stripBotMention(message.text || '');
+  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  const personality = await loadBotPersonality();
+
+  const response = await fetchWithTimeout(`${OPENAI_API_BASE}/chat/completions`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    body: JSON.stringify({
+      model,
+      temperature: 0.4,
+      max_tokens: 220,
+      messages: [
+        {
+          role: 'system',
+          content: personality,
+        },
+        {
+          role: 'user',
+          content: [
+            `Bot state:\n${configContext}`,
+            `Recent group context, oldest to newest:\n${promptContext}`,
+            `Message that tagged you:\n${formatMessageForContext(message)}`,
+            `Direct question after removing the bot mention:\n${directQuestion || '(none)'}`,
+          ].join('\n\n'),
+        },
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI API returned ${response.status}: ${errorText}`);
+  }
+
+  const data = await response.json();
+  const reply = data.choices?.[0]?.message?.content?.trim();
+
+  if (!reply) {
+    throw new Error('OpenAI API returned an empty reply');
+  }
+
+  return truncateForGroupMe(reply);
+}
+
+async function getMentionContext(currentMessage) {
+  const limit = parsePositiveInteger(process.env.MENTION_CONTEXT_LIMIT, 20);
+  const messages = await getGroupMessages(limit);
+  const seenIds = new Set(messages.map(message => message.id).filter(Boolean));
+  const combinedMessages = seenIds.has(currentMessage.id)
+    ? messages
+    : [currentMessage, ...messages];
+
+  return combinedMessages
+    .filter(message => message.text || message.id === currentMessage.id)
+    .sort((a, b) => (a.created_at || 0) - (b.created_at || 0))
+    .slice(-limit);
+}
+
+function getMentionCooldownKey(message) {
+  return String(message.user_id || message.name || message.sender_id || 'unknown');
+}
+
+function isRateLimited(message) {
+  const cooldownMs = parsePositiveInteger(process.env.MENTION_COOLDOWN_SECONDS, 15) * 1000;
+  const key = getMentionCooldownKey(message);
+  const now = Date.now();
+  const previousReplyAt = mentionCooldowns.get(key) || 0;
+
+  if (now - previousReplyAt < cooldownMs) {
+    return true;
+  }
+
+  mentionCooldowns.set(key, now);
+
+  if (mentionCooldowns.size > 100) {
+    const cutoff = now - cooldownMs;
+
+    for (const [cooldownKey, timestamp] of mentionCooldowns) {
+      if (timestamp < cutoff) {
+        mentionCooldowns.delete(cooldownKey);
+      }
+    }
+  }
+
+  return false;
+}
+
+async function handleIncomingMessage(message) {
+  if (!message || !message.id) return;
+  if (processedMessageIds.has(message.id)) return;
+  rememberProcessedMessage(message.id);
+
+  if (message.sender_type === 'bot' || message.system) return;
+  if (
+    process.env.GROUP_ID &&
+    message.group_id &&
+    String(message.group_id) !== String(process.env.GROUP_ID)
+  ) return;
+  if (!isMentioningBot(message)) return;
+  if (isRateLimited(message)) {
+    console.log(`⏳ Mention from ${message.name || message.user_id} skipped due to cooldown`);
+    return;
+  }
+
+  console.log(`💬 Mention received from ${message.name || message.user_id}: ${message.text || ''}`);
+
+  try {
+    const [config, contextMessages] = await Promise.all([
+      loadConfig(),
+      getMentionContext(message),
+    ]);
+    const reply = await buildMentionReply(message, contextMessages, config);
+    await sendMessage(reply);
+  } catch (error) {
+    console.error('Error replying to mention:', error);
+    await sendMessage("I saw the tag, but I couldn't build a reply right now. Check my logs and config?");
+  }
+}
+
+function parseJsonRequest(request) {
+  return new Promise((resolve, reject) => {
+    let body = '';
+
+    request.on('data', chunk => {
+      body += chunk;
+
+      if (body.length > 1024 * 1024) {
+        request.destroy();
+        reject(new Error('Request body too large'));
+      }
+    });
+
+    request.on('end', () => {
+      try {
+        resolve(body ? JSON.parse(body) : {});
+      } catch (error) {
+        reject(error);
+      }
+    });
+
+    request.on('error', reject);
+  });
+}
+
+function startWebhookServer() {
+  const port = parsePositiveInteger(process.env.PORT, 3000);
+  const path = process.env.GROUPME_CALLBACK_PATH || '/groupme/callback';
+  const webhookToken = process.env.GROUPME_CALLBACK_TOKEN;
+
+  const server = http.createServer(async (request, response) => {
+    const requestUrl = new URL(request.url, 'http://localhost');
+    const requestPath = requestUrl.pathname;
+
+    if (request.method === 'GET' && requestPath === '/health') {
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ ok: true }));
+      return;
+    }
+
+    if (request.method !== 'POST' || requestPath !== path) {
+      response.writeHead(404, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: 'Not found' }));
+      return;
+    }
+
+    if (webhookToken) {
+      const providedToken = requestUrl.searchParams.get('token') || request.headers['x-groupme-callback-token'];
+
+      if (providedToken !== webhookToken) {
+        response.writeHead(401, { 'Content-Type': 'application/json' });
+        response.end(JSON.stringify({ error: 'Unauthorized' }));
+        return;
+      }
+    }
+
+    try {
+      const message = await parseJsonRequest(request);
+      response.writeHead(202, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ ok: true }));
+      handleIncomingMessage(message).catch(error => {
+        console.error('Unhandled webhook processing error:', error);
+      });
+    } catch (error) {
+      console.error('Error parsing webhook request:', error);
+      response.writeHead(400, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify({ error: 'Invalid JSON' }));
+    }
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, () => {
+      server.off('error', reject);
+      console.log('✅ Webhook server initialized');
+      console.log(`   Listening on port ${port}`);
+      console.log(`   GroupMe callback path: ${path}`);
+      resolve(server);
+    });
+  });
 }
 
 // Find the check-in message and get who liked/reacted to it
@@ -229,7 +627,7 @@ async function selectAndAnnounce() {
   const config = await loadConfig();
   
   // Get minimum attendees threshold from environment variable (default: 3)
-  const minAttendees = parseInt(process.env.MIN_ATTENDEES) || 3;
+  const minAttendees = parsePositiveInteger(process.env.MIN_ATTENDEES, 3);
   
   // Find the check-in message by searching for its text content
   const messages = await getGroupMessages(50); // Increased limit to ensure we find it
@@ -323,7 +721,7 @@ async function sendMessageWithMention(text, mentions) {
   const botId = process.env.GROUPME_BOT_ID;
 
   return withRetry(async () => {
-    const response = await fetch('https://api.groupme.com/v3/bots/post', {
+    const response = await fetchWithTimeout('https://api.groupme.com/v3/bots/post', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -364,7 +762,7 @@ async function sendMessageWithMention(text, mentions) {
 function initScheduler() {
   const checkInTime = process.env.CHECKIN_TIME || '9:00';
   const selectionTime = process.env.SELECTION_TIME || '14:00';
-  const minAttendees = parseInt(process.env.MIN_ATTENDEES) || 3;
+  const minAttendees = parsePositiveInteger(process.env.MIN_ATTENDEES, 3);
   
   const [checkInHour, checkInMinute] = checkInTime.split(':');
   const [selectionHour, selectionMinute] = selectionTime.split(':');
@@ -457,9 +855,22 @@ async function start() {
     console.error('❌ Missing required environment variables. Check your .env file.');
     process.exit(1);
   }
+
+  if (!process.env.OPENAI_API_KEY) {
+    console.warn('⚠️ OPENAI_API_KEY is not set. Scheduled leader selection will still work, but tagged replies will fail.');
+  }
+
+  if (!process.env.GROUPME_BOT_USER_ID && !process.env.GROUPME_BOT_NAME && !process.env.GROUPME_BOT_HANDLE) {
+    console.warn('⚠️ Set GROUPME_BOT_NAME or GROUPME_BOT_USER_ID so the bot knows when it has been tagged.');
+  }
+
+  validateConfig(await loadConfig());
   
+  const webhookServer = await startWebhookServer();
   initScheduler();
   console.log('🚀 Bot is running! Waiting for scheduled times...');
+
+  return webhookServer;
 }
 
 // Handle graceful shutdown
@@ -468,4 +879,23 @@ process.on('SIGINT', () => {
   process.exit(0);
 });
 
-start();
+process.on('unhandledRejection', error => {
+  console.error('Unhandled promise rejection:', error);
+});
+
+process.on('uncaughtException', error => {
+  console.error('Uncaught exception:', error);
+  process.exit(1);
+});
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  start();
+}
+
+export {
+  buildMentionReply,
+  handleIncomingMessage,
+  loadBotPersonality,
+  start,
+  startWebhookServer,
+};

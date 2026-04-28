@@ -7,12 +7,13 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "check": "node --check index.js",
     "history": "node view-history.js",
     "undo": "node undo-last-week.js"
   },
   "dependencies": {
-    "node-cron": "^3.0.3",
-    "node-fetch": "^3.3.2",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "node-cron": "^4.2.1",
+    "node-fetch": "^3.3.2"
   }
 }
