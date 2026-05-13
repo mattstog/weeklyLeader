@@ -223,11 +223,28 @@ function getBotMentionNames() {
   ].filter(Boolean);
 }
 
-function stripBotMention(text = '') {
+function getWakePhrases() {
+  const configuredPhrases = (process.env.GROUPME_WAKE_PHRASES || '')
+    .split(',')
+    .map(phrase => phrase.trim())
+    .filter(Boolean);
+
+  return [
+    ...configuredPhrases,
+    process.env.GROUPME_BOT_NAME,
+    process.env.GROUPME_BOT_HANDLE,
+  ].filter(Boolean);
+}
+
+function stripBotTrigger(text = '') {
   let cleanedText = text;
 
   for (const name of getBotMentionNames()) {
     cleanedText = cleanedText.replace(new RegExp(`@${escapeRegExp(name)}\\b`, 'gi'), '').trim();
+  }
+
+  for (const phrase of getWakePhrases()) {
+    cleanedText = cleanedText.replace(new RegExp(`\\b${escapeRegExp(phrase)}\\b[:,]?`, 'gi'), '').trim();
   }
 
   return cleanedText;
@@ -256,6 +273,20 @@ function isMentioningBot(message) {
 
   const text = message.text || '';
   return getBotMentionNames().some(name => new RegExp(`@${escapeRegExp(name)}\\b`, 'i').test(text));
+}
+
+function hasWakePhrase(message) {
+  const text = message.text || '';
+
+  return getWakePhrases().some(phrase => new RegExp(`\\b${escapeRegExp(phrase)}\\b`, 'i').test(text));
+}
+
+function shouldReplyToMessage(message) {
+  if (hasWakePhrase(message)) {
+    return true;
+  }
+
+  return isMentioningBot(message);
 }
 
 function formatMessageForContext(message) {
@@ -307,7 +338,7 @@ async function buildMentionReply(message, contextMessages, config) {
     .map(formatMessageForContext)
     .join('\n');
   const configContext = JSON.stringify(summarizeConfig(config), null, 2);
-  const directQuestion = stripBotMention(message.text || '');
+  const directQuestion = stripBotTrigger(message.text || '');
   const model = process.env.OPENAI_MODEL || 'gpt-5.4-mini';
   const personality = await loadBotPersonality();
 
@@ -415,7 +446,7 @@ async function handleIncomingMessage(message) {
     message.group_id &&
     String(message.group_id) !== String(process.env.GROUP_ID)
   ) return;
-  if (!isMentioningBot(message)) return;
+  if (!shouldReplyToMessage(message)) return;
   if (isRateLimited(message)) {
     console.log(`⏳ Mention from ${message.name || message.user_id} skipped due to cooldown`);
     return;

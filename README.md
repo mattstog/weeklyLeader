@@ -68,6 +68,7 @@ GROUPME_CALLBACK_PATH=/groupme/callback
 GROUPME_CALLBACK_TOKEN=make_this_a_long_random_value
 GROUPME_BOT_USER_ID=your_bot_groupme_user_id_if_mentions_attach_it
 GROUPME_BOT_HANDLE=Weekly Leader
+GROUPME_WAKE_PHRASES=real samson,selector bot,the real samson selector
 MENTION_CONTEXT_LIMIT=20
 MENTION_COOLDOWN_SECONDS=15
 BOT_PERSONALITY_FILE=./bot-personality.md
@@ -76,7 +77,7 @@ MAX_REPLY_LENGTH=900
 REQUEST_TIMEOUT_MS=15000
 ```
 
-`GROUPME_BOT_NAME` or `GROUPME_BOT_HANDLE` should match the text people use when tagging the bot, like `@Leader Bot`. If GroupMe sends mention attachments with a user ID for the bot, set `GROUPME_BOT_USER_ID` too.
+`GROUPME_BOT_NAME` or `GROUPME_BOT_HANDLE` should match the text people use when tagging the bot, like `@Leader Bot`. If GroupMe sends mention attachments with a user ID for the bot, set `GROUPME_BOT_USER_ID` too. `GROUPME_WAKE_PHRASES` is a comma-separated list of plain-text phrases that wake the bot without GroupMe mention support, like `real samson what is the topic?`.
 
 Edit `bot-personality.md` to change how tagged replies sound. The default voice is a calm, concise, super-wise monk.
 
@@ -93,7 +94,7 @@ https://your-domain.com/groupme/callback?token=make_this_a_long_random_value
 
 If you change `GROUPME_CALLBACK_PATH`, use that path instead. `GROUPME_CALLBACK_TOKEN` is optional, but recommended for production so random public requests cannot trigger bot replies or OpenAI usage.
 
-When a non-bot message tags the bot, it fetches recent group messages, combines them with current leader/topic/history state, asks OpenAI for a concise reply, and posts the answer back to GroupMe.
+When a non-bot message tags the bot or uses one of the configured wake phrases, it fetches recent group messages, combines them with current leader/topic/history state, asks OpenAI for a concise reply, and posts the answer back to GroupMe.
 
 ### 4. Configure Topics and Members
 
