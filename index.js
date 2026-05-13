@@ -241,12 +241,17 @@ function isMentioningBot(message) {
   const botUserId = process.env.GROUPME_BOT_USER_ID;
   const attachments = Array.isArray(message.attachments) ? message.attachments : [];
   const mentionAttachment = attachments.find(attachment => attachment.type === 'mentions');
+  const mentionedUserIds = mentionAttachment?.user_ids?.map(userId => String(userId)) || [];
 
   if (
     botUserId &&
-    mentionAttachment?.user_ids?.some(userId => String(userId) === String(botUserId))
+    mentionedUserIds.includes(String(botUserId))
   ) {
     return true;
+  }
+
+  if (mentionedUserIds.length > 0) {
+    return false;
   }
 
   const text = message.text || '';
@@ -303,10 +308,17 @@ async function buildMentionReply(message, contextMessages, config) {
     .join('\n');
   const configContext = JSON.stringify(summarizeConfig(config), null, 2);
   const directQuestion = stripBotMention(message.text || '');
-  const model = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  const model = process.env.OPENAI_MODEL || 'gpt-5.4-mini';
   const personality = await loadBotPersonality();
 
-  const response = await fetchWithTimeout(`${OPENAI_API_BASE}/chat/completions`, {
+  const input = [
+    `Bot state:\n${configContext}`,
+    `Recent group context, oldest to newest:\n${promptContext}`,
+    `Message that tagged you:\n${formatMessageForContext(message)}`,
+    `Direct question after removing the bot mention:\n${directQuestion || '(none)'}`,
+  ].join('\n\n');
+
+  const response = await fetchWithTimeout(`${OPENAI_API_BASE}/responses`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -314,23 +326,9 @@ async function buildMentionReply(message, contextMessages, config) {
     },
     body: JSON.stringify({
       model,
-      temperature: 0.4,
-      max_tokens: 220,
-      messages: [
-        {
-          role: 'system',
-          content: personality,
-        },
-        {
-          role: 'user',
-          content: [
-            `Bot state:\n${configContext}`,
-            `Recent group context, oldest to newest:\n${promptContext}`,
-            `Message that tagged you:\n${formatMessageForContext(message)}`,
-            `Direct question after removing the bot mention:\n${directQuestion || '(none)'}`,
-          ].join('\n\n'),
-        },
-      ],
+      instructions: personality,
+      input,
+      max_output_tokens: 220,
     }),
   });
 
@@ -340,13 +338,27 @@ async function buildMentionReply(message, contextMessages, config) {
   }
 
   const data = await response.json();
-  const reply = data.choices?.[0]?.message?.content?.trim();
+  const reply = extractResponseText(data);
 
   if (!reply) {
     throw new Error('OpenAI API returned an empty reply');
   }
 
   return truncateForGroupMe(reply);
+}
+
+function extractResponseText(response) {
+  if (response.output_text) {
+    return response.output_text.trim();
+  }
+
+  return (response.output || [])
+    .flatMap(item => item.content || [])
+    .filter(content => content.type === 'output_text' || content.type === 'text')
+    .map(content => content.text)
+    .filter(Boolean)
+    .join('\n')
+    .trim();
 }
 
 async function getMentionContext(currentMessage) {
