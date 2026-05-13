@@ -900,7 +900,7 @@ process.on('uncaughtException', error => {
   process.exit(1);
 });
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.env.pm_id !== undefined || import.meta.url === `file://${process.argv[1]}`) {
   start();
 }
 
