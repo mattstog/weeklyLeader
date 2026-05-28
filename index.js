@@ -46,6 +46,24 @@ function truncateForGroupMe(text) {
   return `${text.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
+function isGroupMeUnauthorizedError(error) {
+  return /GroupMe API returned 401/.test(error?.message || '');
+}
+
+async function handleSelectionError(error) {
+  console.error(error);
+
+  const message = isGroupMeUnauthorizedError(error)
+    ? "⚠️ I could post the check-in, but I couldn't read reactions because my GroupMe access token is unauthorized. Please refresh GROUPME_ACCESS_TOKEN and rerun selection."
+    : "⚠️ I hit an error while selecting this week's leader/topic. Please check my logs and rerun selection.";
+
+  try {
+    await sendMessage(message);
+  } catch (sendError) {
+    console.error('Error sending selection failure notice:', sendError);
+  }
+}
+
 function formatForGroupMe(text) {
   return text
     .replace(/\*\*([^*\n]+)\*\*/g, '$1')
@@ -845,7 +863,7 @@ function initScheduler() {
   
   // Sunday 2 PM selection
   cron.schedule(`${selectionMinute} ${selectionHour} * * 0`, () => {
-    selectAndAnnounce().catch(console.error);
+    selectAndAnnounce().catch(handleSelectionError);
   });
   
   console.log('✅ Scheduler initialized');

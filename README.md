@@ -294,6 +294,7 @@ The bot looks at history to find the leader's previous date, so you won't lose t
 - Check your Access Token is correct
 - Make sure Group ID is correct
 - Bot needs a few seconds after posting to fetch likes
+- If logs show `GroupMe API returned 401`, generate a fresh GroupMe access token and update `GROUPME_ACCESS_TOKEN` in `.env`
 
 ### Leader not being selected
 - Make sure members' user_ids match the people who liked the message
