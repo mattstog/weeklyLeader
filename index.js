@@ -12,10 +12,16 @@ const GROUPME_API_BASE = 'https://api.groupme.com/v3';
 const OPENAI_API_BASE = 'https://api.openai.com/v1';
 const processedMessageIds = new Set();
 const mentionCooldowns = new Map();
+let lastRandomChimeAt = 0;
 
 function parsePositiveInteger(value, fallback) {
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function parseNonNegativeFloat(value, fallback) {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function getRequestTimeoutMs() {
@@ -306,18 +312,95 @@ function isMentioningBot(message) {
   return getBotMentionNames().some(name => new RegExp(`@${escapeRegExp(name)}\\b`, 'i').test(text));
 }
 
+function getReplyAttachments(message) {
+  const attachments = Array.isArray(message.attachments) ? message.attachments : [];
+  return attachments.filter(attachment => attachment.type === 'reply');
+}
+
+function getReplyReferenceIds(message) {
+  return getReplyAttachments(message)
+    .flatMap(attachment => [
+      attachment.reply_id,
+      attachment.base_reply_id,
+      attachment.message_id,
+      attachment.original_message_id,
+      attachment.reply?.id,
+      attachment.message?.id,
+    ])
+    .filter(Boolean)
+    .map(id => String(id));
+}
+
+function isReplyingToBot(message, contextMessages) {
+  const replyReferenceIds = getReplyReferenceIds(message);
+
+  if (replyReferenceIds.length === 0) {
+    return false;
+  }
+
+  const botUserId = process.env.GROUPME_BOT_USER_ID;
+  return contextMessages.some(contextMessage => {
+    const isReferencedMessage = replyReferenceIds.includes(String(contextMessage.id));
+    const isBotMessage = contextMessage.sender_type === 'bot' ||
+      (botUserId && String(contextMessage.user_id) === String(botUserId));
+
+    return isReferencedMessage && isBotMessage;
+  });
+}
+
 function hasWakePhrase(message) {
   const text = message.text || '';
 
   return getWakePhrases().some(phrase => new RegExp(`\\b${escapeRegExp(phrase)}\\b`, 'i').test(text));
 }
 
-function shouldReplyToMessage(message) {
-  if (hasWakePhrase(message)) {
-    return true;
+function shouldRandomlyChime(message) {
+  const chance = parseNonNegativeFloat(process.env.GROUPME_RANDOM_CHIME_CHANCE, 0);
+
+  if (chance <= 0 || !(message.text || '').trim()) {
+    return false;
   }
 
-  return isMentioningBot(message);
+  const cooldownMs = parsePositiveInteger(process.env.GROUPME_RANDOM_CHIME_COOLDOWN_MINUTES, 180) * 60 * 1000;
+  const now = Date.now();
+
+  if (now - lastRandomChimeAt < cooldownMs) {
+    return false;
+  }
+
+  if (Math.random() >= chance) {
+    return false;
+  }
+
+  lastRandomChimeAt = now;
+  return true;
+}
+
+async function getReplyTrigger(message) {
+  if (hasWakePhrase(message)) {
+    return { type: 'wake_phrase', contextMessages: null };
+  }
+
+  if (isMentioningBot(message)) {
+    return { type: 'mention', contextMessages: null };
+  }
+
+  if (getReplyAttachments(message).length > 0) {
+    const contextMessages = await getMessageContext(message);
+
+    if (isReplyingToBot(message, contextMessages)) {
+      return { type: 'bot_reply', contextMessages };
+    }
+
+    return null;
+  }
+
+  if (shouldRandomlyChime(message)) {
+    const contextMessages = await getMessageContext(message);
+    return { type: 'random_chime', contextMessages };
+  }
+
+  return null;
 }
 
 function formatMessageForContext(message) {
@@ -360,7 +443,7 @@ function summarizeConfig(config) {
   };
 }
 
-async function buildMentionReply(message, contextMessages, config) {
+async function buildMentionReply(message, contextMessages, config, triggerType = 'direct') {
   if (!process.env.OPENAI_API_KEY) {
     throw new Error('OPENAI_API_KEY is required for mention replies');
   }
@@ -376,7 +459,8 @@ async function buildMentionReply(message, contextMessages, config) {
   const input = [
     `Bot state:\n${configContext}`,
     `Recent group context, oldest to newest:\n${promptContext}`,
-    `Message that tagged you:\n${formatMessageForContext(message)}`,
+    `Reply trigger:\n${triggerType}`,
+    `Message that triggered you:\n${formatMessageForContext(message)}`,
     `Direct question after removing the bot mention:\n${directQuestion || '(none)'}`,
   ].join('\n\n');
 
@@ -423,8 +507,8 @@ function extractResponseText(response) {
     .trim();
 }
 
-async function getMentionContext(currentMessage) {
-  const limit = parsePositiveInteger(process.env.MENTION_CONTEXT_LIMIT, 20);
+async function getMessageContext(currentMessage) {
+  const limit = parsePositiveInteger(process.env.MESSAGE_CONTEXT_LIMIT || process.env.MENTION_CONTEXT_LIMIT, 50);
   const messages = await getGroupMessages(limit);
   const seenIds = new Set(messages.map(message => message.id).filter(Boolean));
   const combinedMessages = seenIds.has(currentMessage.id)
@@ -436,6 +520,8 @@ async function getMentionContext(currentMessage) {
     .sort((a, b) => (a.created_at || 0) - (b.created_at || 0))
     .slice(-limit);
 }
+
+const getMentionContext = getMessageContext;
 
 function getMentionCooldownKey(message) {
   return String(message.user_id || message.name || message.sender_id || 'unknown');
@@ -477,20 +563,20 @@ async function handleIncomingMessage(message) {
     message.group_id &&
     String(message.group_id) !== String(process.env.GROUP_ID)
   ) return;
-  if (!shouldReplyToMessage(message)) return;
+  const trigger = await getReplyTrigger(message);
+
+  if (!trigger) return;
   if (isRateLimited(message)) {
-    console.log(`⏳ Mention from ${message.name || message.user_id} skipped due to cooldown`);
+    console.log(`⏳ ${trigger.type} from ${message.name || message.user_id} skipped due to cooldown`);
     return;
   }
 
-  console.log(`💬 Mention received from ${message.name || message.user_id}: ${message.text || ''}`);
+  console.log(`💬 ${trigger.type} received from ${message.name || message.user_id}: ${message.text || ''}`);
 
   try {
-    const [config, contextMessages] = await Promise.all([
-      loadConfig(),
-      getMentionContext(message),
-    ]);
-    const reply = await buildMentionReply(message, contextMessages, config);
+    const contextMessages = trigger.contextMessages || await getMessageContext(message);
+    const config = await loadConfig();
+    const reply = await buildMentionReply(message, contextMessages, config, trigger.type);
     await sendMessage(reply);
   } catch (error) {
     console.error('Error replying to mention:', error);
