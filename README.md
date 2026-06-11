@@ -72,15 +72,14 @@ GROUPME_WAKE_PHRASES=real samson,selector bot,the real samson selector
 MESSAGE_CONTEXT_LIMIT=50
 MENTION_CONTEXT_LIMIT=50
 MENTION_COOLDOWN_SECONDS=15
-GROUPME_RANDOM_CHIME_CHANCE=0.02
-GROUPME_RANDOM_CHIME_COOLDOWN_MINUTES=180
+GROUPME_PROACTIVE_REPLIES=false
 BOT_PERSONALITY_FILE=./bot-personality.md
 OPENAI_MODEL=gpt-5.4-mini
 MAX_REPLY_LENGTH=900
 REQUEST_TIMEOUT_MS=15000
 ```
 
-`GROUPME_BOT_NAME` or `GROUPME_BOT_HANDLE` should match the text people use when tagging the bot, like `@Leader Bot`. If GroupMe sends mention attachments with a user ID for the bot, set `GROUPME_BOT_USER_ID` too. `GROUPME_WAKE_PHRASES` is a comma-separated list of plain-text phrases that wake the bot without GroupMe mention support, like `real samson what is the topic?`. `GROUPME_RANDOM_CHIME_CHANCE` controls rare unprompted replies; use `0` to disable them.
+`GROUPME_BOT_NAME` or `GROUPME_BOT_HANDLE` should match the text people use when tagging the bot, like `@Leader Bot`. If GroupMe sends mention attachments with a user ID for the bot, set `GROUPME_BOT_USER_ID` too. `GROUPME_WAKE_PHRASES` is a comma-separated list of plain-text phrases that wake the bot without GroupMe mention support, like `real samson what is the topic?`. `GROUPME_PROACTIVE_REPLIES=true` lets the bot evaluate ordinary messages and reply only when the conversation clearly calls for it.
 
 Edit `bot-personality.md` to change how tagged replies sound. The default voice is a calm, concise, super-wise monk.
 
@@ -97,7 +96,7 @@ https://your-domain.com/groupme/callback?token=make_this_a_long_random_value
 
 If you change `GROUPME_CALLBACK_PATH`, use that path instead. `GROUPME_CALLBACK_TOKEN` is optional, but recommended for production so random public requests cannot trigger bot replies or OpenAI usage.
 
-When a non-bot message tags the bot, replies to the bot, uses one of the configured wake phrases, or passes the optional random-chime settings, it fetches recent group messages, combines them with current leader/topic/history state, asks OpenAI for a concise reply, and posts the answer back to GroupMe.
+When a non-bot message tags the bot, replies to the bot, uses one of the configured wake phrases, or passes the optional proactive-reply judgment, it fetches recent group messages, combines them with current leader/topic/history state, asks OpenAI for a concise reply, and posts the answer back to GroupMe.
 
 ### 4. Configure Topics and Members
 

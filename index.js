@@ -12,16 +12,10 @@ const GROUPME_API_BASE = 'https://api.groupme.com/v3';
 const OPENAI_API_BASE = 'https://api.openai.com/v1';
 const processedMessageIds = new Set();
 const mentionCooldowns = new Map();
-let lastRandomChimeAt = 0;
 
 function parsePositiveInteger(value, fallback) {
   const parsed = parseInt(value, 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-function parseNonNegativeFloat(value, fallback) {
-  const parsed = parseFloat(value);
-  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function getRequestTimeoutMs() {
@@ -354,25 +348,15 @@ function hasWakePhrase(message) {
   return getWakePhrases().some(phrase => new RegExp(`\\b${escapeRegExp(phrase)}\\b`, 'i').test(text));
 }
 
-function shouldRandomlyChime(message) {
-  const chance = parseNonNegativeFloat(process.env.GROUPME_RANDOM_CHIME_CHANCE, 0);
-
-  if (chance <= 0 || !(message.text || '').trim()) {
+function shouldConsiderProactiveReply(message) {
+  if (process.env.GROUPME_PROACTIVE_REPLIES !== 'true') {
     return false;
   }
 
-  const cooldownMs = parsePositiveInteger(process.env.GROUPME_RANDOM_CHIME_COOLDOWN_MINUTES, 180) * 60 * 1000;
-  const now = Date.now();
-
-  if (now - lastRandomChimeAt < cooldownMs) {
+  if (!(message.text || '').trim()) {
     return false;
   }
 
-  if (Math.random() >= chance) {
-    return false;
-  }
-
-  lastRandomChimeAt = now;
   return true;
 }
 
@@ -395,9 +379,12 @@ async function getReplyTrigger(message) {
     return null;
   }
 
-  if (shouldRandomlyChime(message)) {
+  if (shouldConsiderProactiveReply(message)) {
     const contextMessages = await getMessageContext(message);
-    return { type: 'random_chime', contextMessages };
+
+    if (await shouldProactivelyReply(message, contextMessages)) {
+      return { type: 'proactive_chime', contextMessages };
+    }
   }
 
   return null;
@@ -493,6 +480,59 @@ async function buildMentionReply(message, contextMessages, config, triggerType =
   return truncateForGroupMe(formatForGroupMe(reply));
 }
 
+async function shouldProactivelyReply(message, contextMessages) {
+  if (!process.env.OPENAI_API_KEY) {
+    return false;
+  }
+
+  const promptContext = contextMessages
+    .map(formatMessageForContext)
+    .join('\n');
+  const model = process.env.OPENAI_MODEL || 'gpt-5.4-mini';
+  const input = [
+    'Decide whether the bot should jump into this GroupMe conversation unprompted.',
+    'Return only JSON with this shape: {"should_reply":true|false,"reason":"short reason"}.',
+    '',
+    'Say true only when a real person in this group chat would naturally add value right now: a direct practical answer, a useful callback to recent context, a genuinely funny short quip, or a clarification about the group/leader/topic.',
+    'Say false for normal chatter, two-person back-and-forth, unclear context, serious/vulnerable messages, logistics where another human should answer, repeated jokes, or anything where the bot would feel like it is forcing itself into the room.',
+    'Be selective. Prefer false unless the opportunity is obvious.',
+    '',
+    `Recent group context, oldest to newest:\n${promptContext}`,
+    `Newest message:\n${formatMessageForContext(message)}`,
+  ].join('\n');
+
+  try {
+    const response = await fetchWithTimeout(`${OPENAI_API_BASE}/responses`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+      },
+      body: JSON.stringify({
+        model,
+        instructions: 'You are a conservative participation gate for a GroupMe bot. Output only valid JSON.',
+        input,
+        max_output_tokens: 80,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`OpenAI API returned ${response.status}: ${errorText}`);
+    }
+
+    const decisionText = extractResponseText(await response.json());
+    const decision = parseJsonFromText(decisionText);
+    const shouldReply = decision?.should_reply === true;
+
+    console.log(`🤔 proactive decision: ${shouldReply ? 'reply' : 'skip'} (${decision?.reason || 'no reason'})`);
+    return shouldReply;
+  } catch (error) {
+    console.error('Error deciding proactive reply:', error);
+    return false;
+  }
+}
+
 function extractResponseText(response) {
   if (response.output_text) {
     return response.output_text.trim();
@@ -505,6 +545,15 @@ function extractResponseText(response) {
     .filter(Boolean)
     .join('\n')
     .trim();
+}
+
+function parseJsonFromText(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    const match = text.match(/\{[\s\S]*\}/);
+    return match ? JSON.parse(match[0]) : null;
+  }
 }
 
 async function getMessageContext(currentMessage) {
