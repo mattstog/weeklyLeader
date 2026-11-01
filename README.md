@@ -258,6 +258,29 @@ Clear the `usedTopics` array in `config.json` to start fresh
 
 Set each member's `lastLed` to `null` and `timesLed` to `0`
 
+## Scheduler actions in chat
+
+The reply bot and Sunday scheduler share the same upcoming-week record. Address the bot by its configured name or wake phrase, or reply to one of its messages:
+
+- “Samson Selector, who is leading and what is the topic?”
+- “Samson Selector, who has reacted to the check-in?”
+- “Samson Selector, I’ll lead this week.”
+- “Samson Selector, make the topic forgiveness.”
+- “Samson Selector, send the check-in now.”
+- “Samson Selector, send the reminder now.”
+- “Samson Selector, select the leader and topic now.”
+- “Samson Selector, assign Peter as leader.”
+- “Samson Selector, cancel this week.”
+- “Samson Selector, resume this week.”
+- “Samson Selector, undo the last assignment.”
+- “Samson Selector, move check-in to 10:00 and selection to 15:00, with 3 attendees required.”
+
+Set `SCHEDULER_ADMIN_USER_IDS` to a comma-separated list of trusted GroupMe user IDs. Admins can use every scheduler action. Registered members can volunteer themselves; anyone in the group can ask for status, attendance, and recent history. Permissions use the incoming sender's ID, never their display name or an ID supplied by the model. Proactive chat replies cannot change state.
+
+Chat changes persist in `config.json`. Scheduled selection respects a manually chosen leader and topic. Changes to an already finalized assignment update history and leader counts; undo reverses the latest active entry. Explicit cancellation/skip suppresses sends until an admin resumes that week. A new week clears old assignments, and selection never reuses a previous week's check-in. Check-ins, reminders, and selection are deduplicated; missed times are not replayed. Recurring time and attendance changes take effect immediately and survive restart. Reminder time remains ten minutes before selection.
+
+Run `npm test` for scheduler, state/action, and reply-tool regression tests. Tests use simulated messages and do not post to GroupMe.
+
 ## Admin Commands
 
 ### View History
