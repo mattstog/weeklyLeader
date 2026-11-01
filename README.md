@@ -239,9 +239,12 @@ Edit `.env`:
 ```env
 CHECKIN_TIME=9:00
 SELECTION_TIME=14:00
+SCHEDULE_TIMEZONE=America/Chicago
+# Optional comma-separated local dates to skip all scheduled messages:
+# SCHEDULE_SKIP_DATES=2026-11-01
 ```
 
-(24-hour format)
+(24-hour format). The scheduler checks the current time in `SCHEDULE_TIMEZONE` (default `America/Chicago`), so host timezone settings do not change the schedule. Missed times are not replayed. `SCHEDULE_SKIP_DATES` suppresses all scheduled jobs on the specified dates without affecting later weeks.
 
 ### Add More Topics
 

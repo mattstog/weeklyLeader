@@ -1,4 +1,4 @@
-import cron from 'node-cron';
+import { createScheduleTick, parseScheduleTime } from './scheduler.js';
 import fetch from 'node-fetch';
 import fs from 'fs/promises';
 import http from 'http';
@@ -973,34 +973,24 @@ function initScheduler() {
   const selectionTime = process.env.SELECTION_TIME || '14:00';
   const minAttendees = parsePositiveInteger(process.env.MIN_ATTENDEES, 3);
   
-  const [checkInHour, checkInMinute] = checkInTime.split(':');
-  const [selectionHour, selectionMinute] = selectionTime.split(':');
-  
-  // Calculate reminder time (10 minutes before selection)
-  let reminderHour = parseInt(selectionHour);
-  let reminderMinute = parseInt(selectionMinute) - 10;
-  
-  // Handle cases where subtracting 10 minutes goes negative
-  if (reminderMinute < 0) {
-    reminderMinute += 60;
-    reminderHour -= 1;
-  }
-  
-  // Sunday 9 AM check-in
-  cron.schedule(`${checkInMinute} ${checkInHour} * * 0`, () => {
-    sendCheckIn().catch(console.error);
-  });
-  
-  // Sunday 1:50 PM reminder (10 min before selection)
-  cron.schedule(`${reminderMinute} ${reminderHour} * * 0`, () => {
-    sendReminder().catch(console.error);
-  });
-  
-  // Sunday 2 PM selection
-  cron.schedule(`${selectionMinute} ${selectionHour} * * 0`, () => {
-    selectAndAnnounce().catch(handleSelectionError);
-  });
-  
+  const checkIn = parseScheduleTime(checkInTime);
+  const selection = parseScheduleTime(selectionTime);
+  const reminderMinutes = (selection.hour * 60 + selection.minute - 10 + 1440) % 1440;
+  const reminderHour = Math.floor(reminderMinutes / 60);
+  const reminderMinute = reminderMinutes % 60;
+  const timezone = process.env.SCHEDULE_TIMEZONE || 'America/Chicago';
+  const skipDates = (process.env.SCHEDULE_SKIP_DATES || '').split(',').map(date => date.trim()).filter(Boolean);
+  const tick = createScheduleTick([
+    { ...checkIn, run: sendCheckIn },
+    { hour: reminderHour, minute: reminderMinute, run: sendReminder },
+    { ...selection, run: () => selectAndAnnounce().catch(handleSelectionError) },
+  ], { timezone, skipDates });
+
+  // No catch-up: only run jobs during their scheduled minute.
+  setInterval(() => tick().catch(console.error), 1000);
+  console.log(`   Schedule timezone: ${timezone}`);
+  if (skipDates.length) console.log(`   Skipping scheduled messages on: ${skipDates.join(', ')}`);
+
   console.log('✅ Scheduler initialized');
   console.log(`   Check-in: Every Sunday at ${checkInTime}`);
   console.log(`   Reminder: Every Sunday at ${reminderHour}:${reminderMinute.toString().padStart(2, '0')}`);
