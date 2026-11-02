@@ -275,7 +275,9 @@ The reply bot and Sunday scheduler share the same upcoming-week record. Address 
 - “Samson Selector, undo the last assignment.”
 - “Samson Selector, move check-in to 10:00 and selection to 15:00, with 3 attendees required.”
 
-Set `SCHEDULER_ADMIN_USER_IDS` to a comma-separated list of trusted GroupMe user IDs. Admins can use every scheduler action. Registered members can volunteer themselves; anyone in the group can ask for status, attendance, and recent history. Permissions use the incoming sender's ID, never their display name or an ID supplied by the model. Proactive chat replies cannot change state.
+Set `SCHEDULER_ADMIN_USER_IDS` to a comma-separated list of trusted GroupMe user IDs. Admins can use every scheduler action. Registered members can volunteer themselves and the current leader can set the topic; anyone in the group can ask for status, attendance, and recent history. Permissions use the incoming sender's ID, never their display name or an ID supplied by the model. Proactive chat replies cannot change state.
+
+Clear standalone updates also work without a bot mention: “I can lead tonight” records the member as leader, and that leader’s “Word is provision” records the topic. These updates are saved silently, even when proactive replies are disabled, and do not resume a skipped week. Questions, “Word forthcoming,” and messages from previous weeks do not change the record.
 
 Chat changes persist in `config.json`. Scheduled selection respects a manually chosen leader and topic. Changes to an already finalized assignment update history and leader counts; undo reverses the latest active entry. Explicit cancellation/skip suppresses sends until an admin resumes that week. A new week clears old assignments, and selection never reuses a previous week's check-in. Check-ins, reminders, and selection are deduplicated; missed times are not replayed. Recurring time and attendance changes take effect immediately and survive restart. Reminder time remains ten minutes before selection.
 

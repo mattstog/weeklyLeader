@@ -1,6 +1,7 @@
 import { createScheduleTick, parseScheduleTime } from './scheduler.js';
 import { createWeeklyService } from './weekly-service.js';
 import { runActionChat } from './action-chat.js';
+import { observeSchedulerMessage } from './scheduler-observer.js';
 import fetch from 'node-fetch';
 import fs from 'fs/promises';
 import http from 'http';
@@ -575,6 +576,16 @@ async function handleIncomingMessage(message) {
     message.group_id &&
     String(message.group_id) !== String(process.env.GROUP_ID)
   ) return;
+  try {
+    const observed = await observeSchedulerMessage(weeklyService, message);
+    if (observed) {
+      console.log(`Recorded unmentioned scheduler update: ${observed.action || 'already applied'} from ${message.user_id}`);
+      return;
+    }
+  } catch (error) {
+    console.error('Could not record unmentioned scheduler update:', error.message);
+    return;
+  }
   const trigger = await getReplyTrigger(message);
 
   if (!trigger) return;
@@ -926,6 +937,7 @@ if (process.env.pm_id !== undefined || import.meta.url === `file://${process.arg
 
 export {
   buildMentionReply,
+  weeklyService,
   handleIncomingMessage,
   loadBotPersonality,
   start,

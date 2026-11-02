@@ -64,8 +64,11 @@ export function createWeeklyService({ load, save, send, messages, chooseLeader, 
     const w = week(config);
     const admin = (env.SCHEDULER_ADMIN_USER_IDS || '').split(',').map(s => s.trim()).includes(String(actor?.user_id));
     const readOnly = ['status', 'attendance', 'history'].includes(action);
-    if (!scheduled && !readOnly && !admin && !(action === 'volunteer' && config.members.some(m => String(m.user_id) === String(actor?.user_id)))) {
-      throw new Error('Only a configured scheduler admin can make that change. Members may volunteer themselves.');
+    const member = config.members.find(m => String(m.user_id) === String(actor?.user_id));
+    const leaderTopic = action === 'set_topic' && member && !w.cancelled &&
+      (w.leaderId ? String(w.leaderId) === String(member.user_id) : w.leader === member.name);
+    if (!scheduled && !readOnly && !admin && !leaderTopic && !(action === 'volunteer' && config.members.some(m => String(m.user_id) === String(actor?.user_id)))) {
+      throw new Error('Only a configured scheduler admin can make that change. Members may volunteer themselves, and the current leader may set the topic.');
     }
     if (!scheduled && !readOnly && actor?.id && (config.actionLog || []).some(entry => entry.messageId === actor.id && entry.action === action && entry.arguments === JSON.stringify(args))) return { unchanged: true, reason: 'This request was already applied.', currentWeek: w };
     if (readOnly) return { action, meetingDate: w.meetingDate, currentWeek: w, skipped: skipped(w), timezone: timezone(), schedule: settings(config), members: config.members.map(m => ({ name: m.name, user_id: m.user_id, lastLed: m.lastLed, timesLed: m.timesLed })), topics: config.topics, history: config.history.filter(e => !e.undone).slice(-10), ...(action === 'attendance' ? { attendance: await attendance(config, w) } : {}) };
